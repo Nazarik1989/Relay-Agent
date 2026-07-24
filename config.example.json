@@ -1,0 +1,38 @@
+{
+  "repo_path": ".",
+  "projects": [
+    {
+      "name": "project-1",
+      "path": "C:\\Projects\\project-1",
+      "notes_dir": "content-notes",
+      "terminal_logs_dir": "terminal-logs",
+      "ai_logs_dir": "C:\\Projects\\project-1\\ai-logs"
+    },
+    {
+      "name": "project-2",
+      "path": "C:\\Projects\\project-2",
+      "notes_dir": "content-notes",
+      "terminal_logs_dir": "terminal-logs",
+      "ai_logs_dir": "C:\\Projects\\project-2\\ai-logs"
+    },
+    {
+      "name": "project-3",
+      "path": "C:\\Projects\\project-3",
+      "notes_dir": "content-notes",
+      "terminal_logs_dir": "terminal-logs",
+      "ai_logs_dir": "C:\\Projects\\project-3\\ai-logs"
+    }
+  ],
+  "notes_dir": "content-notes",
+  "ai_logs_dir": "ai-logs",
+  "terminal_logs_dir": "terminal-logs",
+  "outputs_dir": "outputs",
+  "language": "ru",
+  "story_count": 7,
+  "recent_tones": [],
+  "autopost_times": ["10:00", "20:00"],
+  "project_aliases": {
+    "SecretClientName": "client-project",
+    "InternalAgentX": "internal-agent"
+  }
+}
