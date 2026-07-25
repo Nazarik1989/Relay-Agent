@@ -1,6 +1,25 @@
-# Relay Agent
+<p align="center">
+  <img src="./docs/assets/avatar.webp" width="230" alt="Relay Agent avatar" />
+</p>
 
-Локальный контентный Relay для разработчика AI-агентов. Python-модуль `agent_content` собирает сигналы из Git, Codex-сессий и ручных заметок, ищет сюжет дня, оценивает content potential, маскирует чувствительные детали и сохраняет дневной content pack в Markdown и JSON.
+<h1 align="center">Relay Agent</h1>
+
+<p align="center">
+  <strong>Локальный мост от доказательств разработки к NAZ Content Inbox.</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Mode-Local_First-B7E8FF?style=flat-square" alt="Local first" />
+  <img src="https://img.shields.io/badge/Output-Project_Scoped_Markdown-52B8FF?style=flat-square" alt="Project-scoped Markdown" />
+  <img src="https://img.shields.io/badge/Publishing-Opt--in-6C7B8A?style=flat-square" alt="Opt-in publishing" />
+  <img src="https://img.shields.io/badge/Tests-26_Passing-00C853?style=flat-square" alt="26 tests passing" />
+</p>
+
+Python-модуль `agent_content` собирает сигналы из Git, Codex-сессий и ручных заметок, ищет сюжет дня, маскирует чувствительные детали и сохраняет content pack в Markdown/JSON. Для NAZ он атомарно экспортирует UTF-8 Markdown по схеме `project/date/topic`; NAZ повторно сканирует материал и выбирает standard или approval-gated Story/Reels workflow.
+
+<p align="center">
+  <img src="./docs/assets/architecture.svg" width="100%" alt="Relay Agent architecture" />
+</p>
 
 ## Почему Python
 
