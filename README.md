@@ -18,7 +18,11 @@
 Python-модуль `agent_content` собирает сигналы из Git, Codex-сессий и ручных заметок, ищет сюжет дня, маскирует чувствительные детали и сохраняет content pack в Markdown/JSON. Для NAZ он атомарно экспортирует UTF-8 Markdown по схеме `project/date/topic`; NAZ повторно сканирует материал и выбирает standard или approval-gated Story/Reels workflow.
 
 <p align="center">
-  <img src="./docs/assets/architecture.svg" width="100%" alt="Relay Agent architecture" />
+  <img src="./docs/assets/relay-flow.gif" width="100%" alt="Animated Relay to NAZ workflow with standard draft and approval-gated Story/Reels routes" />
+</p>
+
+<p align="center">
+  <sub>Animated evidence flow · <a href="./docs/assets/architecture.svg">Open the static diagram</a></sub>
 </p>
 
 ## Почему Python
