@@ -24,6 +24,7 @@ from agent_content.integrations.codex_topic_exporter import CodexTopicExporter
 from agent_content.integrations.nazai_client import NazAiClient, nazai_response_to_markdown
 from agent_content.integrations.nazai_inbox import NazAiInbox
 from agent_content.integrations.nazai_publisher import NazAiPublisher, extract_publish_text
+from agent_content.integrations.operator_event_exporter import OperatorEventExporter
 from agent_content.integrations.telegram_sender import TelegramSender
 from agent_content.models import Note, TerminalLog
 from agent_content.outputs.json_writer import JsonWriter
@@ -326,6 +327,7 @@ def run_restore_history(args: argparse.Namespace) -> int:
             raise RuntimeError("VPS sync requires --vps-host or NAZAI_VPS_HOST")
         path = args.vps_path or os.getenv("NAZAI_VPS_PATH") or "/opt/naz-ai-bot"
         _sync_nazai_inbox_to_vps(Path(result["inbox_dir"]), host, path)
+        _sync_operator_events_result_to_vps(result, host, path)
         print(f"synced {len(topics)} topics: {host}:{path}/content_inbox/agent_content")
     return 0
 
@@ -567,6 +569,7 @@ def run_export_nazai_inbox(args: argparse.Namespace) -> int:
             raise RuntimeError("VPS sync requires --vps-host or NAZAI_VPS_HOST")
         path = args.vps_path or os.getenv("NAZAI_VPS_PATH") or "/opt/naz-ai-bot"
         _sync_nazai_inbox_to_vps(Path(result["inbox_dir"]), host, path)
+        _sync_operator_events_result_to_vps(result, host, path)
         print(f"Тематический inbox скопирован на VPS: {host}:{path}/content_inbox/agent_content")
     return 0
 
@@ -591,6 +594,7 @@ def run_export_nazai_inbox_all(args: argparse.Namespace) -> int:
             raise RuntimeError("VPS sync requires --vps-host or NAZAI_VPS_HOST")
         path = args.vps_path or os.getenv("NAZAI_VPS_PATH") or "/opt/naz-ai-bot"
         _sync_nazai_inbox_to_vps(Path(result["inbox_dir"]), host, path)
+        _sync_operator_events_result_to_vps(result, host, path)
         print(f"Тематический inbox скопирован на VPS: {host}:{path}/content_inbox/agent_content")
     return 0
 
@@ -602,7 +606,28 @@ def _write_topic_inbox(summaries: list) -> tuple[dict[str, object], list]:
     source_topic_ids = {topic.topic_id for topic in topics}
     if len(documents) != len(stories) or any(story.topic_id not in source_topic_ids for story in stories):
         raise RuntimeError("Story path collision or unknown topic while building NazAI inbox")
-    result = NazAiInbox().write_documents(documents)
+    inbox = NazAiInbox()
+    operator_events = OperatorEventExporter(inbox.inbox_dir.parent / "operator_events")
+    event_documents = None
+    try:
+        event_documents = operator_events.build_documents(topics, stories)
+    except Exception:
+        # Shadow metadata must never block the established text-only inbox.
+        event_documents = None
+
+    result = inbox.write_documents(documents)
+    result["operator_events_dir"] = operator_events.output_root
+    result["operator_events_status"] = "failed"
+    result["operator_events_reason_code"] = "operator_event_export_failed"
+    if event_documents is not None:
+        try:
+            event_result = operator_events.write_documents(event_documents)
+        except Exception:
+            pass
+        else:
+            result["operator_events_status"] = "ready"
+            result["operator_events_reason_code"] = None
+            result["operator_event_count"] = event_result["document_count"]
     return result, stories
 
 
@@ -940,6 +965,70 @@ def _sync_nazai_inbox_to_vps(inbox_dir: Path, host: str, vps_path: str) -> None:
     remote_backup = f"{remote_parent}/.agent_content.backup"
     _run_checked(["ssh", host, f"mkdir -p {remote_parent} && rm -rf {remote_staging} {remote_backup}"])
     _run_checked(["scp", "-r", str(inbox_dir), f"{host}:{remote_staging}"])
+    _run_checked(
+        [
+            "ssh",
+            host,
+            (
+                f"test -d {remote_staging} && "
+                f"if test -d {remote_target}; then mv {remote_target} {remote_backup}; fi && "
+                f"mv {remote_staging} {remote_target} && rm -rf {remote_backup}"
+            ),
+        ]
+    )
+
+
+def _sync_operator_events_result_to_vps(result: dict[str, object], host: str, vps_path: str) -> None:
+    if result.get("operator_events_status") != "ready":
+        return
+    raw_root = result.get("operator_events_dir")
+    if raw_root is None:
+        raise RuntimeError("OperatorEvent export is ready but its root is missing")
+    _sync_operator_events_to_vps(Path(raw_root), host, vps_path)
+
+
+def _sync_operator_events_to_vps(events_dir: Path, host: str, vps_path: str) -> None:
+    if not events_dir.exists() or not events_dir.is_dir():
+        raise RuntimeError(f"OperatorEvent directory not found: {events_dir}")
+    entries = list(events_dir.rglob("*"))
+    if any(path.is_symlink() for path in entries):
+        raise RuntimeError("Refusing VPS sync: OperatorEvent tree must not contain symlinks")
+    files = [path for path in entries if path.is_file()]
+    if not files or any(path.suffix.casefold() != ".json" for path in files):
+        raise RuntimeError("Refusing VPS sync: OperatorEvent tree must contain regular JSON documents only")
+
+    for path in files:
+        relative = path.relative_to(events_dir)
+        if len(relative.parts) != 3:
+            raise RuntimeError(f"Refusing VPS sync: unsafe OperatorEvent path {relative.as_posix()}")
+        project, target_date, filename = relative.parts
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", target_date):
+            raise RuntimeError(f"Refusing VPS sync: unsafe OperatorEvent date {target_date}")
+        match = re.fullmatch(r"t-([0-9a-f]{12})\.json", filename)
+        if not match:
+            raise RuntimeError(f"Refusing VPS sync: unsafe OperatorEvent filename {filename}")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Refusing VPS sync: invalid OperatorEvent JSON {filename}") from exc
+        if not isinstance(payload, dict) or payload.get("contract_version") != "operator-event-set.v1":
+            raise RuntimeError(f"Refusing VPS sync: invalid OperatorEvent contract {filename}")
+        if (
+            payload.get("project") != project
+            or payload.get("date") != target_date
+            or payload.get("topic_id") != match.group(1)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(payload.get("source_hash") or ""))
+            or not isinstance(payload.get("events"), list)
+            or len(payload["events"]) != 1
+        ):
+            raise RuntimeError(f"Refusing VPS sync: mismatched OperatorEvent metadata {filename}")
+
+    remote_parent = f"{vps_path.rstrip('/')}/content_inbox"
+    remote_target = f"{remote_parent}/operator_events"
+    remote_staging = f"{remote_parent}/.operator_events.staging"
+    remote_backup = f"{remote_parent}/.operator_events.backup"
+    _run_checked(["ssh", host, f"mkdir -p {remote_parent} && rm -rf {remote_staging} {remote_backup}"])
+    _run_checked(["scp", "-r", str(events_dir), f"{host}:{remote_staging}"])
     _run_checked(
         [
             "ssh",
