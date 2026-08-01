@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -183,10 +184,22 @@ def _script_stdin(mock_call: object) -> str:
 
     value = mock_call.kwargs.get("input")
     if value is None:
-        value = mock_call.kwargs.get("input_text")
-    if not isinstance(value, str):
-        raise AssertionError("expected a text script in subprocess stdin")
-    return value
+        value = mock_call.kwargs.get("input_bytes")
+    if not isinstance(value, bytes):
+        raise AssertionError("expected a byte script in subprocess stdin")
+    return value.decode("utf-8")
+
+
+def _posix_sh() -> str:
+    shell = shutil.which("sh")
+    if shell:
+        return shell
+    git = shutil.which("git")
+    if git:
+        candidate = Path(git).resolve().parent.parent / "usr" / "bin" / "sh.exe"
+        if candidate.is_file():
+            return str(candidate)
+    raise AssertionError("a POSIX sh executable is required for the transport syntax gate")
 
 
 def _simulate_remote_release(
@@ -938,12 +951,52 @@ class VpsReleaseSyncTests(unittest.TestCase):
             self.assertIn("StrictHostKeyChecking=yes", command)
             if command[0] == "ssh":
                 self.assertEqual(["sh", "-s"], command[-2:])
-                self.assertIsInstance(call.kwargs.get("input"), str)
+                self.assertIsInstance(call.kwargs.get("input"), bytes)
                 self.assertNotIn("stdin", call.kwargs)
+                self.assertNotIn("text", call.kwargs)
+                self.assertNotIn("encoding", call.kwargs)
+                self.assertNotIn("errors", call.kwargs)
             else:
                 self.assertEqual(subprocess.DEVNULL, call.kwargs["stdin"])
                 self.assertNotIn("input", call.kwargs)
             self.assertLessEqual(call.kwargs["timeout"], 180)
+
+    def test_remote_scripts_use_lf_only_bytes_without_text_mode(self) -> None:
+        completed = SimpleNamespace(returncode=0)
+        with patch("agent_content.cli.subprocess.run", return_value=completed) as run:
+            cli._run_remote_script(
+                self.HOST,
+                "first\r\nsecond\rthird\n",
+                failure_code="vps_sync_remote_transaction_failed",
+            )
+        command = run.call_args.args[0]
+        kwargs = run.call_args.kwargs
+        self.assertEqual("ssh", command[0])
+        self.assertEqual(["sh", "-s"], command[-2:])
+        self.assertEqual(b"first\nsecond\nthird\n", kwargs["input"])
+        self.assertNotIn(b"\r", kwargs["input"])
+        self.assertIsInstance(kwargs["input"], bytes)
+        self.assertNotIn("text", kwargs)
+        self.assertNotIn("encoding", kwargs)
+        self.assertNotIn("errors", kwargs)
+
+    def test_remote_script_nul_fails_closed_before_subprocess(self) -> None:
+        script = "echo ok\x00echo bad"
+        output = io.StringIO()
+        with (
+            patch("agent_content.cli.subprocess.run") as run,
+            redirect_stdout(output),
+            redirect_stderr(output),
+        ):
+            with self.assertRaises(VpsSyncError) as raised:
+                cli._run_remote_script(
+                    self.HOST,
+                    script,
+                    failure_code="vps_sync_remote_transaction_failed",
+                )
+        self.assertEqual("vps_sync_remote_transaction_failed", raised.exception.reason_code)
+        run.assert_not_called()
+        self.assertNotIn(script, output.getvalue())
 
     def test_each_sync_uses_unique_staging_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -980,6 +1033,28 @@ class VpsReleaseSyncTests(unittest.TestCase):
         self.assertLess(script.index("phase=lock"), script.index("phase=hold_markdown"))
         self.assertLess(script.index("phase=hold_markdown"), script.index("phase=install_markdown"))
         self.assertIn('printf \'%s\\n\' "$transaction_id" > "$lock_owner"', script)
+
+    def test_generated_transaction_script_passes_posix_syntax_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result, _, _ = _write_release_fixture(Path(tmp))
+            script = _transaction_script(result)
+            payload = cli._remote_script_bytes(
+                script,
+                failure_code="vps_sync_remote_transaction_failed",
+            )
+            script_path = Path(tmp) / "nazai-release-transaction.sh"
+            script_path.write_bytes(payload)
+            completed = subprocess.run(
+                [_posix_sh(), "-n", str(script_path)],
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                check=False,
+            )
+        self.assertNotIn("\r", script)
+        self.assertNotIn(b"\r", payload)
+        self.assertEqual(0, completed.returncode, completed.stderr)
 
     def test_foreign_lock_work_is_untouched_and_commit_marker_is_atomic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1068,7 +1143,8 @@ class VpsReleaseSyncTests(unittest.TestCase):
                     _sync_nazai_release_to_vps(result, self.HOST, self.VPS_PATH)
         self.assertFalse(
             any(
-                "phase=install_markdown" in str(kwargs.get("input_text", ""))
+                "phase=install_markdown"
+                in bytes(kwargs.get("input_bytes", b"")).decode("utf-8")
                 for _, kwargs in commands
             )
         )
@@ -1093,7 +1169,8 @@ class VpsReleaseSyncTests(unittest.TestCase):
         self.assertEqual(2, scp_count)
         self.assertFalse(
             any(
-                "phase=install_markdown" in str(kwargs.get("input_text", ""))
+                "phase=install_markdown"
+                in bytes(kwargs.get("input_bytes", b"")).decode("utf-8")
                 for _, kwargs in commands
             )
         )
@@ -1604,7 +1681,7 @@ class VpsReleaseSyncTests(unittest.TestCase):
             self.assertIn("StrictHostKeyChecking=yes", argv)
             self.assertLess(len(" ".join(argv)), 400)
             self.assertNotIn("echo pwned", " ".join(argv))
-            self.assertIsInstance(call.kwargs.get("input_text"), str)
+            self.assertIsInstance(call.kwargs.get("input_bytes"), bytes)
         transaction = _script_stdin(ssh_calls[-1])
         self.assertIn("echo pwned", transaction)
         self.assertIn("юникод", transaction)

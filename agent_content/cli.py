@@ -2176,8 +2176,16 @@ def _run_remote_script(
         failure_code=failure_code,
         lock_busy_exit=lock_busy_exit,
         exit_reason_codes=exit_reason_codes,
-        input_text=script,
+        input_bytes=_remote_script_bytes(script, failure_code=failure_code),
     )
+
+
+def _remote_script_bytes(script: str, *, failure_code: str) -> bytes:
+    """Encode a remote shell payload without platform newline translation."""
+
+    if "\x00" in script:
+        raise VpsSyncError(failure_code)
+    return script.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
 
 
 def _cleanup_remote_transaction(host: str, remote: dict[str, str]) -> None:
@@ -2224,18 +2232,26 @@ def _run_checked(
     lock_busy_exit: int | None = None,
     exit_reason_codes: dict[int, str] | None = None,
     input_text: str | None = None,
+    input_bytes: bytes | None = None,
 ) -> None:
+    if input_text is not None and input_bytes is not None:
+        raise ValueError("subprocess input must be text or bytes, not both")
     kwargs: dict[str, object] = {
-        "text": True,
-        "encoding": "utf-8",
-        "errors": "replace",
         "capture_output": True,
         "check": False,
         "timeout": _REMOTE_COMMAND_TIMEOUT_SECONDS,
     }
-    if input_text is None:
-        kwargs["stdin"] = subprocess.DEVNULL
+    if input_bytes is not None:
+        # Keep generated POSIX scripts in binary mode: Windows text mode turns
+        # LF into CRLF before ssh forwards stdin to `sh -s`.
+        kwargs["input"] = input_bytes
     else:
+        kwargs["text"] = True
+        kwargs["encoding"] = "utf-8"
+        kwargs["errors"] = "replace"
+    if input_text is None and input_bytes is None:
+        kwargs["stdin"] = subprocess.DEVNULL
+    elif input_text is not None:
         kwargs["input"] = input_text
     try:
         result = subprocess.run(args, **kwargs)
