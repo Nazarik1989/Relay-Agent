@@ -353,3 +353,11 @@ agent_content/
 - генерация изображений и видео;
 - календарь контента;
 - интеграции с Instagram, TikTok и YouTube Shorts.
+
+---
+
+## Naz AI Lab
+
+This project is part of [Naz AI Lab](https://naz-ai-lab.ru/) — the digital laboratory of [Nazar Zykov](https://naz-ai-lab.ru/creator/).
+
+[Official project page](https://naz-ai-lab.ru/projects/relay-agent/) · [All Naz AI Lab projects](https://naz-ai-lab.ru/projects/)
