@@ -360,4 +360,4 @@ agent_content/
 
 This project is part of [Naz AI Lab](https://naz-ai-lab.ru/) — the digital laboratory of [Nazar Zykov](https://naz-ai-lab.ru/creator/).
 
-[Official project page](https://naz-ai-lab.ru/projects/relay-agent/) · [All Naz AI Lab projects](https://naz-ai-lab.ru/projects/)
+[Official project page](https://naz-ai-lab.ru/projects/relay-agent/) · [Verified case](https://naz-ai-lab.ru/cases/relay-agent/) · [All Naz AI Lab projects](https://naz-ai-lab.ru/projects/)
